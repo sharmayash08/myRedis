@@ -1,33 +1,47 @@
 const net = require('net');
+const RedisParser = require('redis-parser');
 const inMemoryStore = require('./store');
 
-const store = new inMemoryStore;
+const store = new inMemoryStore();
 
 const server = net.createServer((socket) => {
-    socket.on("data" , (data) => {
-        const [command , key , value] = data.toString().trim().split(" ");
+    // Create a Redis parser instance
+    const parser = new RedisParser({
+        returnReply: (reply) => {
+            let response;
 
-        let response;
+            const [command, key, value] = reply;
 
-        switch (command) {
-            case "set":
-                response = store.set(key , value);
-                break;
-            case "get":
-                response = store.get(key);
-                break;
-            case "del":
-                response = store.del(key);
-                break;
-            default:
-                response = "UNKNOWN COMMAND";
-                break;
+            switch (command.toLowerCase()) {
+                case "set":
+                    store.set(key, value);
+                    response = "+OK";
+                    break;
+                case "get":
+                    const result = store.get(key);
+                    response = result !== undefined ? `$${result.length}\r\n${result}` : "$-1";
+                    break;
+                case "del":
+                    const deleted = store.del(key);
+                    response = deleted ? "+OK" : "$-1";
+                    break;
+                default:
+                    response = "-ERROR: Unknown command";
+            }
+
+            // Write response back to the client
+            socket.write(response + "\r\n");
+        },
+        returnError: (error) => {
+            socket.write(`-ERROR: ${error.message}\r\n`);
         }
+    });
 
-        socket.write(response + "\n");
+    socket.on("data", (data) => {
+        parser.execute(data);
     });
 });
 
-server.listen(8000 , () => {
-    console.log('Server is listening on port 8000');
+server.listen(6379, () => {
+    console.log("Server listening on port 6379");
 });
